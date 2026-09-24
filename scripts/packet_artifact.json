@@ -1,0 +1,12 @@
+{
+  "format": "cold-chain-monitor-packets-demo-v1",
+  "frame_version": 1,
+  "node_id": 7,
+  "hub_address_hex": "0001",
+  "frame_size": 48,
+  "tx_interval_ms": 5000,
+  "dht_timeout_us": 240,
+  "lcd_i2c_address_hex": "27",
+  "max_rcv_len": 256,
+  "example_frame": "{\"n\":7,\"s\":0,\"t\":235,\"h\":610}"
+}

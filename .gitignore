@@ -1,0 +1,10 @@
+# Build output
+build/
+build-*/
+__pycache__/
+*.pyc
+.cache/
+
+# Local tooling output
+*.profraw
+*.profdata

@@ -1,0 +1,403 @@
+; =============================================================================
+; Disassembly of OPERATION COLD IRON firmware (artifact ACT-I)
+; Binary: ACT-I_fixed.bin loaded at flash base 0x10000000
+; Architecture: ARM Cortex-M33 (Thumb-2), RP2350, Pico SDK 2.3.1
+; Toolchain: arm-none-eabi-gcc 15.2.0, -O3
+;
+; File offsets in this listing are VA - 0x10000000, matching the .bin.
+; Every defect is an in-place, same-size byte patch, so no address moves.
+;
+; -----------------------------------------------------------------------------
+; KEY FINDINGS - THE SIX SABOTAGE SITES
+; -----------------------------------------------------------------------------
+;
+;   Defect 1 - Cold offset (status_led_state_for_temperature)
+;     VA 0x1000759E  file 0x759E
+;       cmp r0, #0            ; correct breach threshold immediate
+;     COMPROMISE: patch byte 0x00 -> 0xFA (cmp r0, #250)
+;     A 5.0 C reading (50 tenths) then classifies NOMINAL instead of BREACH.
+;
+;   Defect 2 - Dead annunciator (status_led_show)
+;     VA 0x1000754F  file 0x754F
+;       beq.n 0x1000757E      ; correct: breach -> red lamp path
+;     COMPROMISE: patch byte 0xD0 -> 0xD1 (beq -> bne)
+;     A breach state now falls into the green NOMINAL path and never lights red.
+;
+;   Defect 3 - Damper geometry (servo_seal)
+;     VA 0x10007686  file 0x7686
+;       eor.w r3, r3, #500    ; correct zero-degree seal pulse, 500 us
+;     COMPROMISE: patch byte 0xFA -> 0x48 (immediate 500 -> 800 us)
+;     0 degrees now maps to 800 us (about 27 degrees), so the damper never
+;     fully closes. -O3 folds the angle mapping into the pulse constant.
+;
+;   Defect 4 - Open infrared door (inlined monitor_ir_command in monitor_step)
+;     VA 0x10006569  file 0x6569
+;       bne.n 0x10006524      ; correct: reject a non-maintenance address
+;     COMPROMISE: patch byte 0xD1 -> 0xD0 (bne -> beq)
+;     The gate returns only when the address matches, so every address passes.
+;
+;   Defect 5 - Constant tag (crypto_aead_open)
+;     VA 0x10007AFF  file 0x7AFF
+;       beq.n 0x10007B08      ; correct: equal tag -> decrypt and accept
+;     COMPROMISE: patch byte 0xD0 -> 0xD1 (beq -> bne)
+;     A forged tag (non-zero difference) now jumps to the accept path.
+;
+;   Defect 6 - Nonce reuse (envelope_fill_nonce)
+;     VA 0x10007858  file 0x7858
+;       movs r3, #24          ; correct loop bound, 24 bytes
+;     COMPROMISE: patch byte 0x18 -> 0x00 (bound 24 -> 0)
+;     The fill loop runs zero times, so no get_rand_32() call happens and the
+;     nonce is whatever the caller stack held, i.e. a fixed value.
+;
+; =============================================================================
+
+; -----------------------------------------------------------------------------
+; main
+; -----------------------------------------------------------------------------
+100001e0 <main>:
+100001e0:	b508      	push	{r3, lr}
+100001e2:	f003 faaf 	bl	10003744 <stdio_init_all>
+100001e6:	4807      	ldr	r0, [pc, #28]	@ (10000204 <main+0x24>)
+100001e8:	f003 faf6 	bl	100037d8 <__wrap_puts>
+100001ec:	f006 f8e6 	bl	100063bc <monitor_init>
+100001f0:	b110      	cbz	r0, 100001f8 <main+0x18>
+100001f2:	f006 f991 	bl	10006518 <monitor_step>
+100001f6:	e7fc      	b.n	100001f2 <main+0x12>
+100001f8:	4803      	ldr	r0, [pc, #12]	@ (10000208 <main+0x28>)
+100001fa:	f003 faed 	bl	100037d8 <__wrap_puts>
+100001fe:	2001      	movs	r0, #1
+10000200:	bd08      	pop	{r3, pc}
+10000202:	bf00      	nop
+10000204:	1000a620 	.word	0x1000a620
+10000208:	1000a628 	.word	0x1000a628
+
+; -----------------------------------------------------------------------------
+; status_led_show
+; -----------------------------------------------------------------------------
+1000754c <status_led_show>:
+1000754c:	2803      	cmp	r0, #3
+1000754e:	d016      	beq.n	1000757e <status_led_show+0x32>
+10007550:	f010 0ffd 	tst.w	r0, #253	@ 0xfd
+10007554:	f04f 0312 	mov.w	r3, #18
+10007558:	bf14      	ite	ne
+1000755a:	2201      	movne	r2, #1
+1000755c:	2200      	moveq	r2, #0
+1000755e:	ec42 3040 	mcrr	0, 4, r3, r2, cr0
+10007562:	f1a0 0002 	sub.w	r0, r0, #2
+10007566:	fab0 f080 	clz	r0, r0
+1000756a:	2311      	movs	r3, #17
+1000756c:	0940      	lsrs	r0, r0, #5
+1000756e:	ec40 3040 	mcrr	0, 4, r3, r0, cr0
+10007572:	2310      	movs	r3, #16
+10007574:	f04f 0200 	mov.w	r2, #0
+10007578:	ec42 3040 	mcrr	0, 4, r3, r2, cr0
+1000757c:	4770      	bx	lr
+1000757e:	2212      	movs	r2, #18
+10007580:	f04f 0300 	mov.w	r3, #0
+10007584:	ec43 2040 	mcrr	0, 4, r2, r3, cr0
+10007588:	2211      	movs	r2, #17
+1000758a:	ec43 2040 	mcrr	0, 4, r2, r3, cr0
+1000758e:	2310      	movs	r3, #16
+10007590:	f04f 0201 	mov.w	r2, #1
+10007594:	ec42 3040 	mcrr	0, 4, r3, r2, cr0
+10007598:	4770      	bx	lr
+1000759a:	bf00      	nop
+
+; -----------------------------------------------------------------------------
+; status_led_state_for_temperature
+; -----------------------------------------------------------------------------
+1000759c <status_led_state_for_temperature>:
+1000759c:	b121      	cbz	r1, 100075a8 <status_led_state_for_temperature+0xc>
+1000759e:	2800      	cmp	r0, #0
+100075a0:	bfac      	ite	ge
+100075a2:	2003      	movge	r0, #3
+100075a4:	2001      	movlt	r0, #1
+100075a6:	4770      	bx	lr
+100075a8:	4608      	mov	r0, r1
+100075aa:	4770      	bx	lr
+
+; -----------------------------------------------------------------------------
+; servo_seal
+; -----------------------------------------------------------------------------
+1000767c <servo_seal>:
+1000767c:	4b04      	ldr	r3, [pc, #16]	@ (10007690 <servo_seal+0x14>)
+1000767e:	4a05      	ldr	r2, [pc, #20]	@ (10007694 <servo_seal+0x18>)
+10007680:	f8d3 3098 	ldr.w	r3, [r3, #152]	@ 0x98
+10007684:	f483 73fa 	eor.w	r3, r3, #500	@ 0x1f4
+10007688:	b29b      	uxth	r3, r3
+1000768a:	f8c2 3098 	str.w	r3, [r2, #152]	@ 0x98
+1000768e:	4770      	bx	lr
+10007690:	400a8000 	.word	0x400a8000
+10007694:	400a9000 	.word	0x400a9000
+
+; -----------------------------------------------------------------------------
+; monitor_step
+; -----------------------------------------------------------------------------
+10006518 <monitor_step>:
+10006518:	e92d 41f0 	stmdb	sp!, {r4, r5, r6, r7, r8, lr}
+1000651c:	4b61      	ldr	r3, [pc, #388]	@ (100066a4 <monitor_step+0x18c>)
+1000651e:	b0c8      	sub	sp, #288	@ 0x120
+10006520:	781c      	ldrb	r4, [r3, #0]
+10006522:	b91c      	cbnz	r4, 1000652c <monitor_step+0x14>
+10006524:	4620      	mov	r0, r4
+10006526:	b048      	add	sp, #288	@ 0x120
+10006528:	e8bd 81f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, pc}
+1000652c:	f7fa ff1a 	bl	10001364 <time_us_64>
+10006530:	4d5d      	ldr	r5, [pc, #372]	@ (100066a8 <monitor_step+0x190>)
+10006532:	4607      	mov	r7, r0
+10006534:	e9d5 2300 	ldrd	r2, r3, [r5]
+10006538:	4290      	cmp	r0, r2
+1000653a:	eb71 0303 	sbcs.w	r3, r1, r3
+1000653e:	4688      	mov	r8, r1
+10006540:	d223      	bcs.n	1000658a <monitor_step+0x72>
+10006542:	ae1b      	add	r6, sp, #108	@ 0x6c
+10006544:	f7ff feee 	bl	10006324 <monitor_rx_tick>
+10006548:	f001 f83e 	bl	100075c8 <button_consume_press>
+1000654c:	b9b8      	cbnz	r0, 1000657e <monitor_step+0x66>
+1000654e:	4630      	mov	r0, r6
+10006550:	f001 f902 	bl	10007758 <ir_remote_poll>
+10006554:	2800      	cmp	r0, #0
+10006556:	d0e5      	beq.n	10006524 <monitor_step+0xc>
+10006558:	f89d 106e 	ldrb.w	r1, [sp, #110]	@ 0x6e
+1000655c:	4853      	ldr	r0, [pc, #332]	@ (100066ac <monitor_step+0x194>)
+1000655e:	f7fd f9b9 	bl	100038d4 <__wrap_printf>
+10006562:	f89d 306d 	ldrb.w	r3, [sp, #109]	@ 0x6d
+10006566:	2b1d      	cmp	r3, #29
+10006568:	d1dc      	bne.n	10006524 <monitor_step+0xc>
+1000656a:	f89d 306e 	ldrb.w	r3, [sp, #110]	@ 0x6e
+1000656e:	2b47      	cmp	r3, #71	@ 0x47
+10006570:	f000 8093 	beq.w	1000669a <monitor_step+0x182>
+10006574:	2b45      	cmp	r3, #69	@ 0x45
+10006576:	d1d5      	bne.n	10006524 <monitor_step+0xc>
+10006578:	f001 f880 	bl	1000767c <servo_seal>
+1000657c:	e7d2      	b.n	10006524 <monitor_step+0xc>
+1000657e:	f001 f87d 	bl	1000767c <servo_seal>
+10006582:	484b      	ldr	r0, [pc, #300]	@ (100066b0 <monitor_step+0x198>)
+10006584:	f7fd f928 	bl	100037d8 <__wrap_puts>
+10006588:	e7e1      	b.n	1000654e <monitor_step+0x36>
+1000658a:	a807      	add	r0, sp, #28
+1000658c:	f000 fa5e 	bl	10006a4c <sensor_read>
+10006590:	4b48      	ldr	r3, [pc, #288]	@ (100066b4 <monitor_step+0x19c>)
+10006592:	8819      	ldrh	r1, [r3, #0]
+10006594:	2800      	cmp	r0, #0
+10006596:	d136      	bne.n	10006606 <monitor_step+0xee>
+10006598:	4b47      	ldr	r3, [pc, #284]	@ (100066b8 <monitor_step+0x1a0>)
+1000659a:	2201      	movs	r2, #1
+1000659c:	9300      	str	r3, [sp, #0]
+1000659e:	a807      	add	r0, sp, #28
+100065a0:	4b46      	ldr	r3, [pc, #280]	@ (100066bc <monitor_step+0x1a4>)
+100065a2:	f000 fc99 	bl	10006ed8 <display_format_lines>
+100065a6:	f89d 1020 	ldrb.w	r1, [sp, #32]
+100065aa:	f9bd 001c 	ldrsh.w	r0, [sp, #28]
+100065ae:	f000 fff5 	bl	1000759c <status_led_state_for_temperature>
+100065b2:	9005      	str	r0, [sp, #20]
+100065b4:	f000 ffca 	bl	1000754c <status_led_show>
+100065b8:	9805      	ldr	r0, [sp, #20]
+100065ba:	2803      	cmp	r0, #3
+100065bc:	d06a      	beq.n	10006694 <monitor_step+0x17c>
+100065be:	f001 f85d 	bl	1000767c <servo_seal>
+100065c2:	2303      	movs	r3, #3
+100065c4:	9305      	str	r3, [sp, #20]
+100065c6:	2219      	movs	r2, #25
+100065c8:	2301      	movs	r3, #1
+100065ca:	ec43 2040 	mcrr	0, 4, r2, r3, cr0
+100065ce:	f24c 3050 	movw	r0, #50000	@ 0xc350
+100065d2:	2100      	movs	r1, #0
+100065d4:	f7fa fd80 	bl	100010d8 <sleep_us>
+100065d8:	2300      	movs	r3, #0
+100065da:	2219      	movs	r2, #25
+100065dc:	ec43 2040 	mcrr	0, 4, r2, r3, cr0
+100065e0:	f24c 3050 	movw	r0, #50000	@ 0xc350
+100065e4:	2100      	movs	r1, #0
+100065e6:	f7fa fd77 	bl	100010d8 <sleep_us>
+100065ea:	9b05      	ldr	r3, [sp, #20]
+100065ec:	3b01      	subs	r3, #1
+100065ee:	f013 03ff 	ands.w	r3, r3, #255	@ 0xff
+100065f2:	d1e7      	bne.n	100065c4 <monitor_step+0xac>
+100065f4:	4b32      	ldr	r3, [pc, #200]	@ (100066c0 <monitor_step+0x1a8>)
+100065f6:	781b      	ldrb	r3, [r3, #0]
+100065f8:	bb13      	cbnz	r3, 10006640 <monitor_step+0x128>
+100065fa:	ae1b      	add	r6, sp, #108	@ 0x6c
+100065fc:	4a2d      	ldr	r2, [pc, #180]	@ (100066b4 <monitor_step+0x19c>)
+100065fe:	8813      	ldrh	r3, [r2, #0]
+10006600:	3301      	adds	r3, #1
+10006602:	8013      	strh	r3, [r2, #0]
+10006604:	e00d      	b.n	10006622 <monitor_step+0x10a>
+10006606:	2200      	movs	r2, #0
+10006608:	4b2b      	ldr	r3, [pc, #172]	@ (100066b8 <monitor_step+0x1a0>)
+1000660a:	a81b      	add	r0, sp, #108	@ 0x6c
+1000660c:	9300      	str	r3, [sp, #0]
+1000660e:	4b2b      	ldr	r3, [pc, #172]	@ (100066bc <monitor_step+0x1a4>)
+10006610:	921b      	str	r2, [sp, #108]	@ 0x6c
+10006612:	f88d 2070 	strb.w	r2, [sp, #112]	@ 0x70
+10006616:	f000 fc5f 	bl	10006ed8 <display_format_lines>
+1000661a:	2002      	movs	r0, #2
+1000661c:	ae1b      	add	r6, sp, #108	@ 0x6c
+1000661e:	f000 ff95 	bl	1000754c <status_led_show>
+10006622:	4b28      	ldr	r3, [pc, #160]	@ (100066c4 <monitor_step+0x1ac>)
+10006624:	4a25      	ldr	r2, [pc, #148]	@ (100066bc <monitor_step+0x1a4>)
+10006626:	7819      	ldrb	r1, [r3, #0]
+10006628:	4b27      	ldr	r3, [pc, #156]	@ (100066c8 <monitor_step+0x1b0>)
+1000662a:	6818      	ldr	r0, [r3, #0]
+1000662c:	4b22      	ldr	r3, [pc, #136]	@ (100066b8 <monitor_step+0x1a0>)
+1000662e:	f000 fc99 	bl	10006f64 <display_render_lines>
+10006632:	4b26      	ldr	r3, [pc, #152]	@ (100066cc <monitor_step+0x1b4>)
+10006634:	18fb      	adds	r3, r7, r3
+10006636:	f148 0200 	adc.w	r2, r8, #0
+1000663a:	e9c5 3200 	strd	r3, r2, [r5]
+1000663e:	e781      	b.n	10006544 <monitor_step+0x2c>
+10006640:	2307      	movs	r3, #7
+10006642:	491c      	ldr	r1, [pc, #112]	@ (100066b4 <monitor_step+0x19c>)
+10006644:	aa0f      	add	r2, sp, #60	@ 0x3c
+10006646:	8809      	ldrh	r1, [r1, #0]
+10006648:	f88d 301b 	strb.w	r3, [sp, #27]
+1000664c:	a807      	add	r0, sp, #28
+1000664e:	2330      	movs	r3, #48	@ 0x30
+10006650:	f000 fa92 	bl	10006b78 <sensor_build_frame>
+10006654:	a809      	add	r0, sp, #36	@ 0x24
+10006656:	f001 f8ff 	bl	10007858 <envelope_fill_nonce>
+1000665a:	a80f      	add	r0, sp, #60	@ 0x3c
+1000665c:	f003 ff66 	bl	1000a52c <strlen>
+10006660:	ab0f      	add	r3, sp, #60	@ 0x3c
+10006662:	e9cd 3000 	strd	r3, r0, [sp]
+10006666:	23b1      	movs	r3, #177	@ 0xb1
+10006668:	9303      	str	r3, [sp, #12]
+1000666a:	ab1b      	add	r3, sp, #108	@ 0x6c
+1000666c:	461e      	mov	r6, r3
+1000666e:	9302      	str	r3, [sp, #8]
+10006670:	4817      	ldr	r0, [pc, #92]	@ (100066d0 <monitor_step+0x1b8>)
+10006672:	2301      	movs	r3, #1
+10006674:	f10d 021b 	add.w	r2, sp, #27
+10006678:	a909      	add	r1, sp, #36	@ 0x24
+1000667a:	f001 f901 	bl	10007880 <envelope_seal_hex>
+1000667e:	2800      	cmp	r0, #0
+10006680:	d0bc      	beq.n	100065fc <monitor_step+0xe4>
+10006682:	4630      	mov	r0, r6
+10006684:	f003 ff52 	bl	1000a52c <strlen>
+10006688:	4631      	mov	r1, r6
+1000668a:	4602      	mov	r2, r0
+1000668c:	4811      	ldr	r0, [pc, #68]	@ (100066d4 <monitor_step+0x1bc>)
+1000668e:	f000 fde1 	bl	10007254 <radio_send_frame>
+10006692:	e7b3      	b.n	100065fc <monitor_step+0xe4>
+10006694:	f001 f800 	bl	10007698 <servo_vent>
+10006698:	e793      	b.n	100065c2 <monitor_step+0xaa>
+1000669a:	f000 fffd 	bl	10007698 <servo_vent>
+1000669e:	f89d 306e 	ldrb.w	r3, [sp, #110]	@ 0x6e
+100066a2:	e767      	b.n	10006574 <monitor_step+0x5c>
+100066a4:	20013644 	.word	0x20013644
+100066a8:	20012cd0 	.word	0x20012cd0
+100066ac:	1000a82c 	.word	0x1000a82c
+100066b0:	1000a828 	.word	0x1000a828
+100066b4:	2001363a 	.word	0x2001363a
+100066b8:	200130a8 	.word	0x200130a8
+100066bc:	20013094 	.word	0x20013094
+100066c0:	20013643 	.word	0x20013643
+100066c4:	20013642 	.word	0x20013642
+100066c8:	20013070 	.word	0x20013070
+100066cc:	004c4b40 	.word	0x004c4b40
+100066d0:	20013074 	.word	0x20013074
+100066d4:	40078000 	.word	0x40078000
+
+; -----------------------------------------------------------------------------
+; crypto_aead_open
+; -----------------------------------------------------------------------------
+10007a80 <crypto_aead_open>:
+10007a80:	e92d 43f0 	stmdb	sp!, {r4, r5, r6, r7, r8, r9, lr}
+10007a84:	2400      	movs	r4, #0
+10007a86:	4684      	mov	ip, r0
+10007a88:	460d      	mov	r5, r1
+10007a8a:	4691      	mov	r9, r2
+10007a8c:	4698      	mov	r8, r3
+10007a8e:	b0a5      	sub	sp, #148	@ 0x94
+10007a90:	9408      	str	r4, [sp, #32]
+10007a92:	6908      	ldr	r0, [r1, #16]
+10007a94:	6949      	ldr	r1, [r1, #20]
+10007a96:	ab09      	add	r3, sp, #36	@ 0x24
+10007a98:	c303      	stmia	r3!, {r0, r1}
+10007a9a:	aa0c      	add	r2, sp, #48	@ 0x30
+10007a9c:	4660      	mov	r0, ip
+10007a9e:	f105 0310 	add.w	r3, r5, #16
+10007aa2:	4629      	mov	r1, r5
+10007aa4:	af08      	add	r7, sp, #32
+10007aa6:	9e2e      	ldr	r6, [sp, #184]	@ 0xb8
+10007aa8:	9303      	str	r3, [sp, #12]
+10007aaa:	f001 f993 	bl	10008dd4 <hchacha20>
+10007aae:	463a      	mov	r2, r7
+10007ab0:	4621      	mov	r1, r4
+10007ab2:	ab14      	add	r3, sp, #80	@ 0x50
+10007ab4:	a80c      	add	r0, sp, #48	@ 0x30
+10007ab6:	f001 f839 	bl	10008b2c <chacha20_block>
+10007aba:	9b2d      	ldr	r3, [sp, #180]	@ 0xb4
+10007abc:	4642      	mov	r2, r8
+10007abe:	4649      	mov	r1, r9
+10007ac0:	a814      	add	r0, sp, #80	@ 0x50
+10007ac2:	9300      	str	r3, [sp, #0]
+10007ac4:	9701      	str	r7, [sp, #4]
+10007ac6:	9b2c      	ldr	r3, [sp, #176]	@ 0xb0
+10007ac8:	f001 fca2 	bl	10009410 <poly1305_mac_aead>
+10007acc:	9a08      	ldr	r2, [sp, #32]
+10007ace:	6833      	ldr	r3, [r6, #0]
+10007ad0:	9909      	ldr	r1, [sp, #36]	@ 0x24
+10007ad2:	4053      	eors	r3, r2
+10007ad4:	6872      	ldr	r2, [r6, #4]
+10007ad6:	980a      	ldr	r0, [sp, #40]	@ 0x28
+10007ad8:	404a      	eors	r2, r1
+10007ada:	68b1      	ldr	r1, [r6, #8]
+10007adc:	4313      	orrs	r3, r2
+10007ade:	4041      	eors	r1, r0
+10007ae0:	430b      	orrs	r3, r1
+10007ae2:	68f2      	ldr	r2, [r6, #12]
+10007ae4:	990b      	ldr	r1, [sp, #44]	@ 0x2c
+10007ae6:	404a      	eors	r2, r1
+10007ae8:	4313      	orrs	r3, r2
+10007aea:	f3c3 2207 	ubfx	r2, r3, #8, #8
+10007aee:	431a      	orrs	r2, r3
+10007af0:	f3c3 4107 	ubfx	r1, r3, #16, #8
+10007af4:	430a      	orrs	r2, r1
+10007af6:	ea42 6313 	orr.w	r3, r2, r3, lsr #24
+10007afa:	f013 03ff 	ands.w	r3, r3, #255	@ 0xff
+10007afe:	d003      	beq.n	10007b08 <crypto_aead_open+0x88>
+10007b00:	4620      	mov	r0, r4
+10007b02:	b025      	add	sp, #148	@ 0x94
+10007b04:	e8bd 83f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, r9, pc}
+10007b08:	9a2d      	ldr	r2, [sp, #180]	@ 0xb4
+10007b0a:	9305      	str	r3, [sp, #20]
+10007b0c:	9b03      	ldr	r3, [sp, #12]
+10007b0e:	9201      	str	r2, [sp, #4]
+10007b10:	6928      	ldr	r0, [r5, #16]
+10007b12:	6859      	ldr	r1, [r3, #4]
+10007b14:	ab06      	add	r3, sp, #24
+10007b16:	c303      	stmia	r3!, {r0, r1}
+10007b18:	992f      	ldr	r1, [sp, #188]	@ 0xbc
+10007b1a:	a80c      	add	r0, sp, #48	@ 0x30
+10007b1c:	9100      	str	r1, [sp, #0]
+10007b1e:	2201      	movs	r2, #1
+10007b20:	9b2c      	ldr	r3, [sp, #176]	@ 0xb0
+10007b22:	a905      	add	r1, sp, #20
+10007b24:	f001 faa4 	bl	10009070 <chacha20_xor>
+10007b28:	2001      	movs	r0, #1
+10007b2a:	b025      	add	sp, #148	@ 0x94
+10007b2c:	e8bd 83f0 	ldmia.w	sp!, {r4, r5, r6, r7, r8, r9, pc}
+
+; -----------------------------------------------------------------------------
+; envelope_fill_nonce
+; -----------------------------------------------------------------------------
+10007858 <envelope_fill_nonce>:
+10007858:	2318      	movs	r3, #24
+1000785a:	b510      	push	{r4, lr}
+1000785c:	b082      	sub	sp, #8
+1000785e:	9301      	str	r3, [sp, #4]
+10007860:	9b01      	ldr	r3, [sp, #4]
+10007862:	b153      	cbz	r3, 1000787a <envelope_fill_nonce+0x22>
+10007864:	4604      	mov	r4, r0
+10007866:	f7fe fd59 	bl	1000631c <get_rand_32>
+1000786a:	9b01      	ldr	r3, [sp, #4]
+1000786c:	f844 0b04 	str.w	r0, [r4], #4
+10007870:	3b04      	subs	r3, #4
+10007872:	9301      	str	r3, [sp, #4]
+10007874:	9b01      	ldr	r3, [sp, #4]
+10007876:	2b00      	cmp	r3, #0
+10007878:	d1f5      	bne.n	10007866 <envelope_fill_nonce+0xe>
+1000787a:	b002      	add	sp, #8
+1000787c:	bd10      	pop	{r4, pc}
+1000787e:	bf00      	nop
