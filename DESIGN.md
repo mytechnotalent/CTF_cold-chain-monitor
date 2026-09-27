@@ -110,8 +110,11 @@ Recovery objectives (not bugs):
 The crypto core is the same verified in-repo implementation used by OPERATION
 COLD IRON: Argon2id (RFC 9106) plus XChaCha20-Poly1305 (RFC 8439), with BLAKE2b
 and Poly1305. The CTF deliberately breaks only the two seams above (tag compare
-and nonce source), so the rest of the cryptography is a correct reference the
-student can trust once the seams are fixed.
+and nonce source), so the rest of the cryptography is a correct reference for
+study once the seams are fixed. It is lab-only: the field passphrase and salt are
+compiled into the image in cleartext, so the field key is recoverable by anyone
+holding the `.bin`, and Argon2id at `m=64` KiB is below current memory-hardness
+guidance. This is not a secrecy guarantee.
 
 ---
 

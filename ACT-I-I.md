@@ -350,8 +350,11 @@ All six defects are same-size in-place byte patches, so no address moves.
 
 The crypto core is a correct reference construction. Only the two seams
 described in Bug #5 and Bug #6 were broken. Once those bytes are restored,
-the rest of the Argon2id plus XChaCha20-Poly1305 pipeline is trustworthy.
-Describe the construction honestly in your report.
+the rest of the Argon2id plus XChaCha20-Poly1305 pipeline verifies as intended
+against anyone who sees only the wire. That is not a secrecy guarantee: the
+field passphrase and salt are embedded in the image, the field key is recoverable
+by anyone holding the `.bin`, and Argon2id at `m=64` KiB is below current
+memory-hardness guidance. Describe the construction honestly in your report.
 
 ---
 
